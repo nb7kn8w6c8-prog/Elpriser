@@ -1,0 +1,137 @@
+name: Opdater elpriser
+
+on:
+  schedule:
+    - cron: "7 * * * *"      # hver time, 7 minutter over
+  workflow_dispatch:          # gør det muligt at starte manuelt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: elpriser
+  cancel-in-progress: false
+
+jobs:
+  opdater:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hent priser og tariffer
+        run: |
+          cat > fetch-prices.mjs << 'SCRIPT'
+          import fs from "node:fs/promises";
+
+          const API = "https://api.energidataservice.dk/dataset/";
+          const AREA = "DK1";
+          const GLN_DSO = "5790001100520";        // Elnet Midt A/S
+          const GLN_ENERGINET = "5790000432752";  // Energinet
+          const DSO_NOTE = "Nettarif C time";
+
+          const dkDate = (off) => {
+            const d = new Date();
+            d.setDate(d.getDate() + off);
+            return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen" }).format(d);
+          };
+          const nextDate = (iso) => {
+            const [y, m, dd] = iso.split("-").map(Number);
+            const d = new Date(Date.UTC(y, m - 1, dd));
+            d.setUTCDate(d.getUTCDate() + 1);
+            return d.toISOString().slice(0, 10);
+          };
+
+          async function get(dataset, params) {
+            const url = API + dataset + "?" + new URLSearchParams(params);
+            const r = await fetch(url, { headers: { Accept: "application/json" } });
+            if (!r.ok) throw new Error(dataset + " svarede " + r.status + ": " + (await r.text()).slice(0, 300));
+            return r.json();
+          }
+          const priceArray = (rec) =>
+            Array.from({ length: 24 }, (_, i) => {
+              const v = rec["Price" + (i + 1)];
+              return typeof v === "number" ? v : 0;
+            });
+
+          const d0 = dkDate(0), d1 = dkDate(1);
+
+          // Spotpriser. Markedet kører 15-minutters intervaller, så kvarterne lægges sammen til timegennemsnit.
+          const spotJs = await get("DayAheadPrices", {
+            start: d0, end: nextDate(d1), limit: "1000",
+            filter: JSON.stringify({ PriceArea: [AREA] })
+          });
+          const buckets = {};
+          for (const r of spotJs.records ?? []) {
+            const t = r.TimeDK;
+            if (!t) continue;
+            const p = r.DayAheadPriceDKK;
+            if (p === null || p === undefined) continue;
+            const date = t.slice(0, 10), h = parseInt(t.slice(11, 13), 10);
+            ((buckets[date] ??= {})[h] ??= []).push(p / 1000);   // DKK/MWh -> DKK/kWh
+          }
+
+          const days = {};
+          for (const date of [d0, d1]) {
+            const b = buckets[date];
+            if (!b) continue;
+            const spot = Array.from({ length: 24 }, (_, h) => {
+              const v = b[h];
+              return v && v.length ? v.reduce((x, y) => x + y, 0) / v.length : null;
+            });
+            days[date] = { spot };
+          }
+          if (!days[d0]) throw new Error("Ingen spotpriser for " + d0 + " - skriver ikke data.json");
+
+          // Nettarif fra Elnet Midt og afgifter fra Energinet, pr. dag
+          for (const date of Object.keys(days)) {
+            const to = nextDate(date);
+
+            const dsoJs = await get("DatahubPricelist", {
+              start: date, end: to, limit: "50",
+              filter: JSON.stringify({ GLN_Number: [GLN_DSO], Note: [DSO_NOTE] })
+            });
+            const drec = (dsoJs.records ?? [])[0];
+            days[date].dso = drec
+              ? { note: drec.Note, code: drec.ChargeTypeCode, prices: priceArray(drec) }
+              : null;
+
+            const enJs = await get("DatahubPricelist", {
+              start: date, end: to, limit: "200",
+              filter: JSON.stringify({ GLN_Number: [GLN_ENERGINET], ChargeType: ["D03"] })
+            });
+            const seen = new Set(), list = [];
+            for (const r of enJs.records ?? []) {
+              if (seen.has(r.Note)) continue;
+              seen.add(r.Note);
+              list.push({ note: r.Note, prices: priceArray(r) });
+            }
+            list.sort((a, b) => a.note.localeCompare(b.note, "da"));
+            days[date].energinet = list;
+          }
+
+          // Skriv kun hvis selve tallene har ændret sig, så der ikke laves en commit i timen
+          const fresh = { priceArea: AREA, days };
+          let unchanged = false;
+          try {
+            const old = JSON.parse(await fs.readFile("data.json", "utf8"));
+            delete old.generated;
+            unchanged = JSON.stringify(old) === JSON.stringify(fresh);
+          } catch {}
+
+          if (unchanged) {
+            console.log("Ingen ændringer.");
+          } else {
+            await fs.writeFile("data.json", JSON.stringify({ generated: new Date().toISOString(), ...fresh }));
+            console.log("Skrev data.json for " + Object.keys(days).join(" og "));
+          }
+          SCRIPT
+          node fetch-prices.mjs
+          rm fetch-prices.mjs
+
+      - name: Gem ændringer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          git diff --staged --quiet || git commit -m "Opdaterede elpriser"
+          git push
