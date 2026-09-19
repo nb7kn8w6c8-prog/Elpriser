@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elpris Viborg — time for time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#E7ECEF;
+    --panel:#FFFFFF;
+    --ink:#0F2029;
+    --soft:#5C6E7A;
+    --line:#CBD6DD;
+    --spot:#12657C;
+    --spot-dim:#9BC3CE;
+    --tariff:#E0A32A;
+    --tariff-dim:#F2DCA6;
+    --now:#A32E27;
+    --ok:#2E6B4F;
+    --radius:10px;
+    --chart-h:230px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0E1A21; --panel:#152530; --ink:#E9F0F3; --soft:#9AAEB8; --line:#263B47;
+      --spot:#3FA3BE; --spot-dim:#1E4E5C; --tariff:#E8B647; --tariff-dim:#5A4517; --now:#E4736B; --ok:#63C295;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Sans","Segoe UI",system-ui,-apple-system,sans-serif;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.45;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:18px 14px 56px}
+
+  /* ---- hero ---- */
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;margin-bottom:14px}
+  h1{font-size:1.05rem;font-weight:600;margin:0;letter-spacing:-0.01em}
+  .place{color:var(--soft);font-size:.9rem}
+  .daynav{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--panel)}
+  .daynav button{
+    appearance:none;border:0;background:transparent;color:var(--soft);
+    font:inherit;font-size:.85rem;padding:6px 14px;cursor:pointer;
+  }
+  .daynav button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+  .daynav button:disabled{opacity:.4;cursor:not-allowed}
+  .daynav button:focus-visible{outline:2px solid var(--spot);outline-offset:-2px}
+
+  .hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  .hero .lbl{font-size:.82rem;color:var(--soft)}
+  .hero .big{font-size:2.9rem;font-weight:700;letter-spacing:-0.03em;line-height:1.05;margin:2px 0 0}
+  .hero .big span{font-size:1rem;font-weight:500;color:var(--soft);letter-spacing:0}
+  .split{display:flex;height:9px;border-radius:3px;overflow:hidden;margin:12px 0 8px;background:var(--line)}
+  .split i{display:block;height:100%}
+  .split .s{background:var(--spot)}
+  .split .t{background:var(--tariff)}
+  .splitkey{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.84rem;color:var(--soft)}
+  .splitkey b{color:var(--ink);font-weight:600}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+  .dot.s{background:var(--spot)} .dot.t{background:var(--tariff)}
+
+  /* ---- chart ---- */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 12px 10px;margin-bottom:12px}
+  .chartrow{display:flex;gap:8px}
+  .yaxis{width:38px;flex:0 0 38px;position:relative;font-size:.68rem;color:var(--soft)}
+  .yaxis span{position:absolute;right:0;transform:translateY(-50%);white-space:nowrap}
+  .plot{flex:1;min-width:0}
+  .bars{display:flex;align-items:flex-end;gap:2px;position:relative}
+  .col{flex:1;min-width:0;display:flex;flex-direction:column;cursor:pointer;background:none;border:0;padding:0}
+  .col:focus-visible{outline:2px solid var(--spot);outline-offset:2px}
+  .pos{display:flex;flex-direction:column;justify-content:flex-end}
+  .neg{display:flex;flex-direction:column;justify-content:flex-start}
+  .seg{width:100%;transition:opacity .12s}
+  .seg.s{background:var(--spot)}
+  .seg.t{background:var(--tariff);border-radius:2px 2px 0 0}
+  .col .seg.s{border-radius:2px 2px 0 0}
+  .col .seg.s + .seg.t{border-radius:0}
+  .col.dim .seg{opacity:.42}
+  .col.sel .seg{outline:2px solid var(--ink);outline-offset:-1px}
+  .zeroline{height:1px;background:var(--line)}
+  .gridline{position:absolute;left:0;right:0;height:1px;background:var(--line);opacity:.65;pointer-events:none}
+  .nowmark{position:absolute;top:-4px;bottom:0;width:2px;background:var(--now);pointer-events:none}
+  .nowmark::before{content:"nu";position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:.62rem;color:var(--now);font-weight:600}
+
+  .loadband{display:flex;gap:2px;margin-top:6px}
+  .loadband div{flex:1;height:5px;border-radius:1px}
+  .xaxis{display:flex;gap:2px;margin-top:4px;font-size:.66rem;color:var(--soft)}
+  .xaxis div{flex:1;text-align:center;overflow:hidden}
+
+  .detail{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:baseline;margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.87rem}
+  .detail .h{font-weight:600;font-size:1rem}
+  .detail .tot{margin-left:auto;font-weight:700;font-size:1.05rem}
+
+  /* ---- extremes ---- */
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .fact{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .fact .k{font-size:.8rem;color:var(--soft)}
+  .fact .v{font-size:1.25rem;font-weight:700;letter-spacing:-0.02em}
+  .fact .s{font-size:.8rem;color:var(--soft)}
+
+  /* ---- table ---- */
+  table{width:100%;border-collapse:collapse;font-size:.86rem}
+  caption{text-align:left;font-size:.82rem;color:var(--soft);padding:0 0 8px}
+  th,td{padding:5px 6px;text-align:right;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  thead th{font-weight:500;color:var(--soft);font-size:.78rem;border-bottom:1px solid var(--line)}
+  tbody tr.now td{background:color-mix(in srgb, var(--now) 8%, transparent);font-weight:600}
+  tbody tr.cheap td:last-child{color:var(--ok);font-weight:700}
+
+  /* ---- settings ---- */
+  details{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:0;margin-bottom:12px}
+  summary{cursor:pointer;padding:11px 14px;font-size:.88rem;font-weight:500;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"＋";float:right;color:var(--soft)}
+  details[open] summary::after{content:"－"}
+  .setbody{padding:0 14px 14px;font-size:.86rem}
+  .setrow{display:flex;align-items:center;gap:9px;padding:5px 0;flex-wrap:wrap}
+  .setrow label{flex:1;min-width:150px}
+  .setrow .amt{color:var(--soft);font-size:.8rem}
+  input[type=number]{width:80px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit;font-size:.85rem}
+  .grp{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+  .grp h3{font-size:.8rem;font-weight:600;color:var(--soft);margin:0 0 6px}
+
+  footer{font-size:.78rem;color:var(--soft);line-height:1.6}
+  footer a{color:var(--spot)}
+  .status{font-size:.78rem;color:var(--soft);margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .status button{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:.78rem;padding:3px 10px;border-radius:999px;cursor:pointer}
+  .err{background:#FBECEA;border:1px solid #E8BDB8;color:#7E241E;border-radius:var(--radius);padding:12px 14px;font-size:.86rem;margin-bottom:12px}
+  @media (prefers-color-scheme: dark){ .err{background:#3A1A18;border-color:#6B2E29;color:#F3C9C4} }
+  .err code{font-size:.76rem;word-break:break-all}
+  .skeleton{height:var(--chart-h);display:flex;align-items:center;justify-content:center;color:var(--soft);font-size:.88rem}
+  @media (max-width:430px){
+    .hero .big{font-size:2.3rem}
+    .facts{grid-template-columns:1fr}
+    .yaxis{width:30px;flex:0 0 30px}
+  }
+  @media (prefers-reduced-motion: reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Elpris time for time</h1>
+    <span class="place">Viborg · DK1 · Elnet Midt, kategori C</span>
+    <nav class="daynav" id="daynav">
+      <button type="button" data-day="0" aria-pressed="true">I dag</button>
+      <button type="button" data-day="1" aria-pressed="false">I morgen</button>
+    </nav>
+  </header>
+
+  <div class="status">
+    <span id="stamp">Henter priser…</span>
+    <button type="button" id="reload">Hent igen</button>
+  </div>
+
+  <div id="errbox"></div>
+
+  <section class="hero">
+    <div class="lbl" id="heroLbl">Prisen lige nu</div>
+    <p class="big" id="heroPrice">–<span> kr./kWh</span></p>
+    <div class="split"><i class="s" id="splitS" style="width:50%"></i><i class="t" id="splitT" style="width:50%"></i></div>
+    <div class="splitkey">
+      <span><i class="dot s"></i>Strøm <b id="heroSpot">–</b></span>
+      <span><i class="dot t"></i>Transport, afgifter og moms <b id="heroTar">–</b></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div id="chartHost">
+      <div class="skeleton">Henter døgnets priser…</div>
+    </div>
+  </section>
+
+  <div class="facts">
+    <div class="fact"><div class="k">Billigste time</div><div class="v" id="cheapV">–</div><div class="s" id="cheapS"></div></div>
+    <div class="fact"><div class="k">Dyreste time</div><div class="v" id="expV">–</div><div class="s" id="expS"></div></div>
+  </div>
+
+  <div class="card">
+    <table id="tbl">
+      <caption>Alle priser i kr. pr. kWh inkl. moms</caption>
+      <thead><tr><th>Time</th><th>Strøm</th><th>Transport og afgifter</th><th>I alt</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Indstillinger og prisposter</summary>
+    <div class="setbody">
+      <div class="setrow">
+        <label for="markup">Eget tillæg fra elselskabet (øre/kWh, ekskl. moms)</label>
+        <input type="number" id="markup" value="0" step="0.1" min="0">
+      </div>
+      <div class="setrow">
+        <input type="checkbox" id="vat" checked>
+        <label for="vat">Vis priser inkl. moms (25 %)</label>
+      </div>
+      <div class="grp">
+        <h3>Elnet Midt A/S — GLN 5790001100520</h3>
+        <div id="dsoBox" class="setrow"><label>Henter…</label></div>
+      </div>
+      <div class="grp">
+        <h3>Energinet — GLN 5790000432752</h3>
+        <div id="enBox"><div class="setrow"><label>Henter…</label></div></div>
+      </div>
+    </div>
+  </details>
+
+  <footer>
+    Strømpris: Energi&nbsp;Data&nbsp;Service, datasæt <em>DayAheadPrices</em>, prisområde DK1. Markedet afregnes i 15-minutters intervaller, og de fire kvarter er lagt sammen til et timegennemsnit.<br>
+    Tarif og afgifter: Energi&nbsp;Data&nbsp;Service, datasæt <em>DatahubPricelist</em> — Elnet Midt A/S (Nettarif C time) og Energinet (transmission, system, elafgift).<br>
+    Abonnementer (Elnet Midt og elselskab) er faste kroner pr. måned og indgår ikke i kWh-prisen her.
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var API = "https://api.energidataservice.dk/dataset/";
+  var GLN_DSO = "5790001100520";      // Elnet Midt A/S
+  var GLN_ENERGINET = "5790000432752";
+  var DSO_NOTE = "Nettarif C time";
+  var VAT = 0.25;
+
+  // Poster fra Energinet der som udgangspunkt er slået til for en almindelig husstand.
+  function defaultOn(note){
+    var n = (note||"").toLowerCase();
+    if (/produktion|indfødning|egenproducent/.test(n)) return false;
+    if (/reduceret/.test(n)) return false;                 // kun for elvarmekunder
+    if (/transmission/.test(n)) return true;
+    if (/^systemtarif/.test(n)) return true;
+    if (/^elafgift$/.test(n)) return true;
+    if (/balancetarif for forbrug/.test(n)) return true;
+    return false;
+  }
+
+  var state = {
+    day: 0,
+    dates: [],
+    spot: {},        // dato -> [24 tal, kr/kWh ekskl. moms]
+    dso: {},         // dato -> {note, prices:[24]}
+    energinet: {},   // dato -> [{note, prices:[24], on}]
+    enOn: {},        // note -> bool (brugervalg, går på tværs af dage)
+    sel: null,
+    markup: 0,
+    vat: true
+  };
+
+  /* ---------- hjælpere ---------- */
+  function dkDate(offsetDays){
+    var d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    return new Intl.DateTimeFormat("sv-SE", {timeZone:"Europe/Copenhagen"}).format(d); // YYYY-MM-DD
+  }
+  function nextDate(iso){
+    var p = iso.split("-");
+    var d = new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+    d.setUTCDate(d.getUTCDate()+1);
+    return d.toISOString().slice(0,10);
+  }
+  function dkHourNow(){
+    var s = new Intl.DateTimeFormat("sv-SE", {timeZone:"Europe/Copenhagen", hour:"2-digit", hour12:false}).format(new Date());
+    return parseInt(s,10);
+  }
+  function kr(v){ return (Math.round(v*100)/100).toFixed(2).replace(".", ","); }
+  function ore(v){ return (Math.round(v*1000)/10).toFixed(1).replace(".", ","); }
+
+  function url(dataset, params){
+    var q = [];
+    for (var k in params){ q.push(encodeURIComponent(k)+"="+encodeURIComponent(params[k])); }
+    return API + dataset + "?" + q.join("&");
+  }
+  function getJSON(u){
+    return fetch(u, {headers:{"Accept":"application/json"}}).then(function(r){
+      if(!r.ok) throw new Error("HTTP " + r.status + " på " + u);
+      return r.json();
+    });
+  }
+  function priceArray(rec){
+    var a = [];
+    for (var h=1; h<=24; h++){
+      var v = rec["Price"+h];
+      a.push(typeof v === "number" ? v : 0);
+    }
+    return a;
+  }
+
+  /* ---------- hent ---------- */
+  function fetchSpot(from, to){
+    var q = {start: from, end: to, limit: 1000, filter: JSON.stringify({PriceArea:["DK1"]})};
+    return getJSON(url("DayAheadPrices", q)).then(function(js){
+      if ((js.records||[]).length) return js;
+      return getJSON(url("Elspotprices", q));   // fallback hvis datasættet skifter navn igen
+    }).catch(function(){
+      return getJSON(url("Elspotprices", q));
+    }).then(function(js){
+      var rows = js.records || [];
+      var buckets = {};
+      rows.forEach(function(r){
+        var t = r.TimeDK || r.HourDK;
+        if(!t) return;
+        var date = t.slice(0,10), h = parseInt(t.slice(11,13),10);
+        var p = r.DayAheadPriceDKK;
+        if (p === null || p === undefined) p = r.SpotPriceDKK;
+        if (p === null || p === undefined) return;
+        buckets[date] = buckets[date] || {};
+        (buckets[date][h] = buckets[date][h] || []).push(p/1000); // DKK/MWh -> DKK/kWh
+      });
+      var out = {};
+      Object.keys(buckets).forEach(function(d){
+        var arr = new Array(24).fill(null);
+        for (var h=0; h<24; h++){
+          var v = buckets[d][h];
+          if (v && v.length) arr[h] = v.reduce(function(a,b){return a+b;},0)/v.length;
+        }
+        out[d] = arr;
+      });
+      return out;
+    });
+  }
+
+  function fetchTariffs(date){
+    var to = nextDate(date);
+    var dso = getJSON(url("DatahubPricelist", {
+      start: date, end: to, limit: 50,
+      filter: JSON.stringify({GLN_Number:[GLN_DSO], Note:[DSO_NOTE]})
+    }));
+    var en = getJSON(url("DatahubPricelist", {
+      start: date, end: to, limit: 200,
+      filter: JSON.stringify({GLN_Number:[GLN_ENERGINET], ChargeType:["D03"]})
+    }));
+    return Promise.all([dso, en]).then(function(res){
+      var drec = (res[0].records || [])[0];
+      state.dso[date] = drec ? {note: drec.Note, code: drec.ChargeTypeCode, prices: priceArray(drec)} : null;
+
+      var seen = {}, list = [];
+      (res[1].records || []).forEach(function(r){
+        if (seen[r.Note]) return;
+        seen[r.Note] = 1;
+        list.push({note: r.Note, prices: priceArray(r)});
+        if (!(r.Note in state.enOn)) state.enOn[r.Note] = defaultOn(r.Note);
+      });
+      list.sort(function(a,b){ return a.note.localeCompare(b.note, "da"); });
+      state.energinet[date] = list;
+    });
+  }
+
+  function loadAll(){
+    document.getElementById("errbox").innerHTML = "";
+    document.getElementById("stamp").textContent = "Henter priser…";
+    state.dates = [dkDate(0), dkDate(1)];
+    var d0 = state.dates[0], d1 = state.dates[1];
+    return fetchSpot(d0, nextDate(d1)).then(function(spot){
+      state.spot = spot;
+      return Promise.all([fetchTariffs(d0), fetchTariffs(d1).catch(function(){})]);
+    }).then(function(){
+      var now = new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen", dateStyle:"short", timeStyle:"short"}).format(new Date());
+      document.getElementById("stamp").textContent = "Hentet " + now;
+      renderSettings();
+      render();
+    }).catch(function(e){
+      showError(e);
+    });
+  }
+
+  function showError(e){
+    document.getElementById("stamp").textContent = "Kunne ikke hente data";
+    document.getElementById("errbox").innerHTML =
+      '<div class="err"><strong>Priserne kunne ikke hentes.</strong><br>' +
+      'Siden henter direkte fra Energi Data Service. Det kræver netadgang, og det virker kun når filen åbnes i en almindelig browser — ikke i en sandkasse der blokerer eksterne kald.<br><br>' +
+      '<code>' + String(e && e.message ? e.message : e) + '</code></div>';
+  }
+
+  /* ---------- beregning ---------- */
+  function compose(date){
+    var spot = state.spot[date];
+    if (!spot) return null;
+    var dso = state.dso[date];
+    var en = state.energinet[date] || [];
+    var m = state.markup/100;             // øre -> kr
+    var f = state.vat ? (1+VAT) : 1;
+    var rows = [];
+    for (var h=0; h<24; h++){
+      if (spot[h] === null || spot[h] === undefined) continue;
+      var s = (spot[h] + m) * f;
+      var net = dso ? dso.prices[h] : 0;
+      var other = 0;
+      en.forEach(function(p){ if (state.enOn[p.note]) other += p.prices[h]; });
+      var t = (net + other) * f;
+      rows.push({h:h, spot:s, tar:t, net:net*f, tot:s+t});
+    }
+    return {rows:rows, hasDso: !!dso};
+  }
+
+  /* ---------- tegn ---------- */
+  function render(){
+    var date = state.dates[state.day];
+    var data = compose(date);
+    var host = document.getElementById("chartHost");
+    var tbody = document.querySelector("#tbl tbody");
+
+    if (!data || !data.rows.length){
+      host.innerHTML = '<div class="skeleton">' +
+        (state.day === 1 ? "Morgendagens priser offentliggøres omkring kl. 13." : "Ingen priser for dagen.") +
+        '</div>';
+      tbody.innerHTML = "";
+      setHero(null);
+      document.getElementById("cheapV").textContent = "–";
+      document.getElementById("expV").textContent = "–";
+      document.getElementById("cheapS").textContent = "";
+      document.getElementById("expS").textContent = "";
+      return;
+    }
+
+    var rows = data.rows;
+    var maxPos = 0, minNeg = 0;
+    rows.forEach(function(r){
+      var top = Math.max(r.tar, 0) + Math.max(r.spot, 0);
+      if (top > maxPos) maxPos = top;
+      if (r.spot < 0 && r.spot < minNeg) minNeg = r.spot;
+      if (r.tar < 0 && r.tar < minNeg) minNeg = r.tar;
+    });
+    if (maxPos <= 0) maxPos = 1;
+    var span = maxPos - minNeg;
+    var H = 230;
+    var posH = Math.round(H * (maxPos/span));
+    var negH = H - posH;
+    var isToday = state.day === 0;
+    var nowH = dkHourNow();
+
+    // y-akse i pæne trin
+    var step = maxPos > 4 ? 1 : maxPos > 2 ? 0.5 : maxPos > 0.8 ? 0.25 : 0.1;
+    var ticks = [];
+    for (var v = 0; v <= maxPos + 1e-9; v += step) ticks.push(v);
+    if (minNeg < 0) ticks.unshift(minNeg);
+
+    var yHtml = ticks.map(function(v){
+      var top = posH - (v/maxPos)*posH;
+      if (v < 0) top = posH + (Math.abs(v)/Math.abs(minNeg||1))*negH;
+      return '<span style="top:'+top+'px">'+kr(v)+'</span>';
+    }).join("");
+
+    var gHtml = ticks.map(function(v){
+      var top = posH - (v/maxPos)*posH;
+      if (v < 0) top = posH + (Math.abs(v)/Math.abs(minNeg||1))*negH;
+      return '<div class="gridline" style="top:'+top+'px"></div>';
+    }).join("");
+
+    // lastniveauer fra den faktiske nettarif
+    var netVals = rows.map(function(r){ return Math.round(r.net*10000)/10000; });
+    var uniq = netVals.filter(function(v,i,a){ return a.indexOf(v)===i; }).sort(function(a,b){return a-b;});
+    var bandNames = uniq.length >= 3 ? ["Lavlast","Højlast","Spidslast"] : uniq.length === 2 ? ["Lavlast","Højlast"] : ["Nettarif"];
+
+    var bars = rows.map(function(r,i){
+      var sPos = Math.max(r.spot,0), tPos = Math.max(r.tar,0);
+      var sNeg = Math.min(r.spot,0);
+      var hS = Math.round((sPos/maxPos)*posH), hT = Math.round((tPos/maxPos)*posH);
+      var hN = minNeg < 0 ? Math.round((Math.abs(sNeg)/Math.abs(minNeg))*negH) : 0;
+      var dim = (isToday && r.h < nowH) ? " dim" : "";
+      var sel = (state.sel === r.h) ? " sel" : "";
+      return '<button class="col'+dim+sel+'" type="button" data-h="'+r.h+'" '+
+             'aria-label="Kl. '+pad(r.h)+', i alt '+kr(r.tot)+' kroner per kilowatttime">' +
+             '<div class="pos" style="height:'+posH+'px">' +
+               (hS>0 ? '<div class="seg s" style="height:'+hS+'px"></div>' : '') +
+               '<div class="seg t" style="height:'+hT+'px"></div>' +
+             '</div>' +
+             '<div class="zeroline"></div>' +
+             '<div class="neg" style="height:'+negH+'px">' +
+               (hN>0 ? '<div class="seg s" style="height:'+hN+'px;border-radius:0 0 2px 2px"></div>' : '') +
+             '</div>' +
+             '</button>';
+    }).join("");
+
+    var band = rows.map(function(r){
+      var idx = uniq.indexOf(Math.round(r.net*10000)/10000);
+      var op = uniq.length > 1 ? (0.25 + 0.75*(idx/(uniq.length-1))) : 0.6;
+      return '<div style="background:var(--tariff);opacity:'+op.toFixed(2)+'" title="'+(bandNames[idx]||"")+'"></div>';
+    }).join("");
+
+    var xax = rows.map(function(r){
+      return '<div>'+(r.h % 3 === 0 ? pad(r.h) : "")+'</div>';
+    }).join("");
+
+    var nowMark = "";
+    if (isToday){
+      var idx = rows.findIndex(function(r){ return r.h === nowH; });
+      if (idx >= 0) nowMark = '<div class="nowmark" style="left:calc('+((idx+0.5)/rows.length*100)+'% - 1px)"></div>';
+    }
+
+    host.innerHTML =
+      '<div class="chartrow">' +
+        '<div class="yaxis" style="height:'+H+'px">'+yHtml+'</div>' +
+        '<div class="plot">' +
+          '<div class="bars" style="height:'+H+'px">'+gHtml+bars+nowMark+'</div>' +
+          '<div class="loadband">'+band+'</div>' +
+          '<div class="xaxis">'+xax+'</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="detail" id="detail"></div>';
+
+    host.querySelectorAll(".col").forEach(function(el){
+      el.addEventListener("click", function(){ state.sel = +el.dataset.h; render(); });
+    });
+
+    // tabel
+    var cheap = rows.reduce(function(a,b){ return b.tot < a.tot ? b : a; });
+    var exp   = rows.reduce(function(a,b){ return b.tot > a.tot ? b : a; });
+
+    tbody.innerHTML = rows.map(function(r){
+      var cls = [];
+      if (isToday && r.h === nowH) cls.push("now");
+      if (r.h === cheap.h) cls.push("cheap");
+      return '<tr class="'+cls.join(" ")+'"><td>'+pad(r.h)+'–'+pad((r.h+1)%24)+'</td>' +
+             '<td>'+kr(r.spot)+'</td><td>'+kr(r.tar)+'</td><td>'+kr(r.tot)+'</td></tr>';
+    }).join("");
+
+    document.getElementById("cheapV").textContent = kr(cheap.tot) + " kr.";
+    document.getElementById("cheapS").textContent = "kl. " + pad(cheap.h) + "–" + pad((cheap.h+1)%24);
+    document.getElementById("expV").textContent = kr(exp.tot) + " kr.";
+    document.getElementById("expS").textContent = "kl. " + pad(exp.h) + "–" + pad((exp.h+1)%24) +
+      " · " + kr(exp.tot - cheap.tot) + " kr. dyrere";
+
+    // detalje + hero
+    var show = rows.find(function(r){ return r.h === state.sel; });
+    if (!show) show = isToday ? (rows.find(function(r){ return r.h === nowH; }) || rows[0]) : rows[0];
+    setHero(show, isToday && show.h === nowH);
+    var det = document.getElementById("detail");
+    det.innerHTML = '<span class="h">Kl. '+pad(show.h)+'–'+pad((show.h+1)%24)+'</span>' +
+      '<span><i class="dot s"></i>'+kr(show.spot)+'</span>' +
+      '<span><i class="dot t"></i>'+kr(show.tar)+'</span>' +
+      '<span class="tot">'+kr(show.tot)+' kr./kWh</span>';
+
+    if (!data.hasDso){
+      document.getElementById("errbox").innerHTML =
+        '<div class="err">Elnet Midts nettarif mangler for '+date+'. Totalen er derfor for lav. Tjek posten under Indstillinger.</div>';
+    }
+  }
+
+  function setHero(r, isNow){
+    var lbl = document.getElementById("heroLbl");
+    if (!r){
+      lbl.textContent = "Prisen";
+      document.getElementById("heroPrice").innerHTML = '–<span> kr./kWh</span>';
+      document.getElementById("heroSpot").textContent = "–";
+      document.getElementById("heroTar").textContent = "–";
+      return;
+    }
+    lbl.textContent = isNow ? "Prisen lige nu" : "Kl. " + pad(r.h) + "–" + pad((r.h+1)%24) +
+      (state.day === 1 ? " i morgen" : "");
+    document.getElementById("heroPrice").innerHTML = kr(r.tot) + '<span> kr./kWh' + (state.vat ? "" : " ekskl. moms") + '</span>';
+    document.getElementById("heroSpot").textContent = ore(r.spot) + " øre";
+    document.getElementById("heroTar").textContent = ore(r.tar) + " øre";
+    var sum = Math.max(r.spot,0) + Math.max(r.tar,0) || 1;
+    document.getElementById("splitS").style.width = (Math.max(r.spot,0)/sum*100) + "%";
+    document.getElementById("splitT").style.width = (Math.max(r.tar,0)/sum*100) + "%";
+  }
+
+  function pad(n){ return (n<10?"0":"")+n; }
+
+  /* ---------- indstillinger ---------- */
+  function renderSettings(){
+    var date = state.dates[state.day] in state.dso ? state.dates[state.day] : state.dates[0];
+    var d = state.dso[date];
+    var dsoBox = document.getElementById("dsoBox");
+    if (d){
+      var u = d.prices.filter(function(v,i,a){return a.indexOf(v)===i;}).sort(function(a,b){return a-b;});
+      dsoBox.innerHTML = '<label>'+d.note+' ('+d.code+')</label><span class="amt">'+
+        u.map(function(v){ return ore(v*(state.vat?1.25:1)); }).join(" / ")+' øre/kWh</span>';
+    } else {
+      dsoBox.innerHTML = '<label>Nettarif ikke fundet for '+date+'</label>';
+    }
+
+    var list = state.energinet[date] || [];
+    var box = document.getElementById("enBox");
+    box.innerHTML = list.map(function(p, i){
+      var v = p.prices[0]*(state.vat?1.25:1);
+      return '<div class="setrow">' +
+        '<input type="checkbox" id="en'+i+'" data-note="'+esc(p.note)+'"'+(state.enOn[p.note]?" checked":"")+'>' +
+        '<label for="en'+i+'">'+esc(p.note)+'</label>' +
+        '<span class="amt">'+ore(v)+' øre/kWh</span></div>';
+    }).join("") || '<div class="setrow"><label>Ingen poster fundet.</label></div>';
+
+    box.querySelectorAll("input[type=checkbox]").forEach(function(cb){
+      cb.addEventListener("change", function(){
+        state.enOn[cb.dataset.note] = cb.checked;
+        render(); renderSettings();
+      });
+    });
+  }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }
+
+  /* ---------- events ---------- */
+  document.getElementById("daynav").addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(!b) return;
+    state.day = +b.dataset.day;
+    state.sel = null;
+    [].forEach.call(this.querySelectorAll("button"), function(x){
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    render(); renderSettings();
+  });
+  document.getElementById("reload").addEventListener("click", loadAll);
+  document.getElementById("markup").addEventListener("input", function(){
+    state.markup = parseFloat(this.value) || 0; render();
+  });
+  document.getElementById("vat").addEventListener("change", function(){
+    state.vat = this.checked;
+    document.querySelector("#tbl caption").textContent =
+      "Alle priser i kr. pr. kWh " + (state.vat ? "inkl. moms" : "ekskl. moms");
+    render(); renderSettings();
+  });
+
+  loadAll();
+  setInterval(function(){ if (state.dates.length) render(); }, 60000);
+})();
+</script>
+</body>
+</html>
