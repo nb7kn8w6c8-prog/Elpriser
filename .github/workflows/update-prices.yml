@@ -27,13 +27,18 @@ jobs:
           const AREA = "DK1";
           const GLN_DSO = "5790001100520";        // Elnet Midt A/S
           const GLN_ENERGINET = "5790000432752";  // Energinet
-          const DSO_NOTE = "Nettarif C time";
+          const DSO_CODE = "T3001";              // Nettarif C, timeaflaest
 
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
           const dkDate = (off) => {
             const d = new Date();
             d.setDate(d.getDate() + off);
+            return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen" }).format(d);
+          };
+          const backDate = (days) => {
+            const d = new Date();
+            d.setDate(d.getDate() - days);
             return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen" }).format(d);
           };
           const nextDate = (iso) => {
@@ -103,13 +108,15 @@ jobs:
           await sleep(4000);
           const dsoJs = await get("DatahubPricelist", {
             start: d0, end: slut, limit: "100",
-            filter: JSON.stringify({ GLN_Number: [GLN_DSO], Note: [DSO_NOTE] })
+            filter: JSON.stringify({ GLN_Number: [GLN_DSO], ChargeTypeCode: [DSO_CODE] })
           });
 
-          // 3) Afgifter fra Energinet, hele perioden i eet kald
+          // 3) Afgifter fra Energinet. start/end filtrerer paa ValidFrom, ikke paa
+          //    gyldighedsperioden, og posterne traadte i kraft 1. januar. Derfor et
+          //    vindue paa to aar bagud - gaelderPaa vaelger den post der gaelder paa dagen.
           await sleep(4000);
           const enJs = await get("DatahubPricelist", {
-            start: d0, end: slut, limit: "500",
+            start: backDate(730), end: slut, limit: "5000",
             filter: JSON.stringify({ GLN_Number: [GLN_ENERGINET], ChargeType: ["D03"] })
           });
 
@@ -128,6 +135,10 @@ jobs:
             list.sort((a, b) => a.note.localeCompare(b.note, "da"));
             days[date].energinet = list;
           }
+
+          // En groen koersel uden nettarif er vildledende - stop hellere her.
+          if (!days[d0].dso) throw new Error("Nettarif ikke fundet for " + d0 + " - skriver ikke data.json");
+          if (!days[d0].energinet.length) throw new Error("Ingen Energinet-poster for " + d0 + " - skriver ikke data.json");
 
           // Skriv kun hvis selve tallene har aendret sig, saa der ikke laves en commit i timen
           const fresh = { priceArea: AREA, days };
