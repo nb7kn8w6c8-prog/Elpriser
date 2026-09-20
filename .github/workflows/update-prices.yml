@@ -82,11 +82,13 @@ jobs:
             String(rec.ValidFrom).slice(0, 10) <= date &&
             (!rec.ValidTo || String(rec.ValidTo).slice(0, 10) > date);
 
-          const d0 = dkDate(0), d1 = dkDate(1), slut = nextDate(d1);
+          // Auktionen clearer normalt eet doegn frem, men hent bredt og tag det der er,
+          // saa siden foelger med af sig selv hvis horisonten en dag bliver laengere.
+          const d0 = dkDate(0), slut = nextDate(dkDate(3));
 
           // 1) Spotpriser. Markedet koerer 15-minutters intervaller, saa kvarterne lægges sammen til timegennemsnit.
           const spotJs = await get("DayAheadPrices", {
-            start: d0, end: slut, limit: "1000",
+            start: d0, end: slut, limit: "3000",
             filter: JSON.stringify({ PriceArea: [AREA] })
           });
           const buckets = {};
@@ -100,9 +102,9 @@ jobs:
           }
 
           const days = {};
-          for (const date of [d0, d1]) {
+          for (const date of Object.keys(buckets).sort()) {
+            if (date < d0) continue;
             const b = buckets[date];
-            if (!b) continue;
             days[date] = {
               spot: Array.from({ length: 24 }, (_, h) => {
                 const v = b[h];
@@ -115,7 +117,7 @@ jobs:
           // 2) Nettarif fra Elnet Midt, hele perioden i eet kald
           await sleep(4000);
           const dsoJs = await get("DatahubPricelist", {
-            start: d0, end: slut, limit: "100",
+            start: d0, end: slut, limit: "200",
             filter: JSON.stringify({ GLN_Number: [GLN_DSO], ChargeTypeCode: [DSO_CODE] })
           });
 
