@@ -64,11 +64,19 @@ jobs:
             return r.json();
           }
 
-          const priceArray = (rec) =>
-            Array.from({ length: 24 }, (_, i) => {
+          // Poster med een doegnpris har kun Price1 sat, resten er null.
+          // Uden det her taeller fx systemtariffen kun i time 00-01.
+          const priceArray = (rec) => {
+            const raw = Array.from({ length: 24 }, (_, i) => {
               const v = rec["Price" + (i + 1)];
-              return typeof v === "number" ? v : 0;
+              return typeof v === "number" ? v : null;
             });
+            if (raw.slice(1).every((v) => v === null)) {
+              const flad = raw[0] ?? 0;
+              return raw.map(() => flad);
+            }
+            return raw.map((v) => (v === null ? 0 : v));
+          };
 
           const gaelderPaa = (rec, date) =>
             String(rec.ValidFrom).slice(0, 10) <= date &&
