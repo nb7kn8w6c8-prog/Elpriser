@@ -25,9 +25,14 @@ jobs:
 
           const API = "https://api.energidataservice.dk/dataset/";
           const AREA = "DK1";
-          const GLN_DSO = "5790001100520";        // Elnet Midt A/S
           const GLN_ENERGINET = "5790000432752";  // Energinet
-          const DSO_CODE = "T3001";              // Nettarif C, timeaflaest
+
+          // Netselskaber siden kan vise. ChargeTypeCode er selskabsspecifik -
+          // der findes ingen faelles kode for "Nettarif C".
+          const DSOS = [
+            { id: "elnet-midt", gln: "5790001100520", code: "T3001" },
+            { id: "n1-344",     gln: "5790000611003", code: "T-C-F-T-TD" }
+          ];
 
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -114,11 +119,16 @@ jobs:
           }
           if (!days[d0]) throw new Error("Ingen spotpriser for " + d0 + " - skriver ikke data.json");
 
-          // 2) Nettarif fra Elnet Midt, hele perioden i eet kald
+          // 2) Nettariffer, alle netselskaber i eet kald. Elnet Midt udgiver daglige
+          //    poster, N1 udgiver perioder paa flere dage - saa vinduet skal vaere bredt
+          //    her ogsaa, og gaelderPaa vaelger den post der gaelder paa dagen.
           await sleep(4000);
           const dsoJs = await get("DatahubPricelist", {
-            start: d0, end: slut, limit: "200",
-            filter: JSON.stringify({ GLN_Number: [GLN_DSO], ChargeTypeCode: [DSO_CODE] })
+            start: backDate(730), end: slut, limit: "5000",
+            filter: JSON.stringify({
+              GLN_Number: DSOS.map((d) => d.gln),
+              ChargeTypeCode: DSOS.map((d) => d.code)
+            })
           });
 
           // 3) Afgifter fra Energinet. start/end filtrerer paa ValidFrom, ikke paa
@@ -131,10 +141,15 @@ jobs:
           });
 
           for (const date of Object.keys(days)) {
-            const drec = (dsoJs.records ?? []).find((r) => gaelderPaa(r, date));
-            days[date].dso = drec
-              ? { note: drec.Note, code: drec.ChargeTypeCode, prices: priceArray(drec) }
-              : null;
+            days[date].dso = {};
+            for (const d of DSOS) {
+              const rec = (dsoJs.records ?? []).find(
+                (r) => r.GLN_Number === d.gln && r.ChargeTypeCode === d.code && gaelderPaa(r, date)
+              );
+              days[date].dso[d.id] = rec
+                ? { note: rec.Note, code: rec.ChargeTypeCode, prices: priceArray(rec) }
+                : null;
+            }
 
             const seen = new Set(), list = [];
             for (const r of enJs.records ?? []) {
@@ -147,7 +162,10 @@ jobs:
           }
 
           // En groen koersel uden nettarif er vildledende - stop hellere her.
-          if (!days[d0].dso) throw new Error("Nettarif ikke fundet for " + d0 + " - skriver ikke data.json");
+          for (const d of DSOS) {
+            if (!days[d0].dso[d.id])
+              throw new Error("Nettarif mangler for " + d.id + " den " + d0 + " - skriver ikke data.json");
+          }
           if (!days[d0].energinet.length) throw new Error("Ingen Energinet-poster for " + d0 + " - skriver ikke data.json");
           // Elafgiften ligger hos Energinet som posten "Elafgift". Skifter navnet,
           // skal koerslen blive roed frem for at levere en for lav slutpris.
