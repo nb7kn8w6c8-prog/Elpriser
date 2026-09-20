@@ -147,6 +147,10 @@ jobs:
           // En groen koersel uden nettarif er vildledende - stop hellere her.
           if (!days[d0].dso) throw new Error("Nettarif ikke fundet for " + d0 + " - skriver ikke data.json");
           if (!days[d0].energinet.length) throw new Error("Ingen Energinet-poster for " + d0 + " - skriver ikke data.json");
+          // Elafgiften ligger hos Energinet som posten "Elafgift". Skifter navnet,
+          // skal koerslen blive roed frem for at levere en for lav slutpris.
+          if (!days[d0].energinet.some((p) => p.note.trim().toLowerCase() === "elafgift"))
+            throw new Error("Posten Elafgift mangler for " + d0 + " - skriver ikke data.json");
 
           // Skriv kun hvis selve tallene har aendret sig, saa der ikke laves en commit i timen
           const fresh = { priceArea: AREA, days };
