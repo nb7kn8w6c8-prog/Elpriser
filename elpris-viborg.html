@@ -226,22 +226,20 @@
 (function(){
   "use strict";
 
-  var API = "https://api.energidataservice.dk/dataset/";
-  var GLN_DSO = "5790001100520";      // Elnet Midt A/S
-  var GLN_ENERGINET = "5790000432752";
-  var DSO_NOTE = "Nettarif C time";
   var VAT = 0.25;
 
-  // Poster fra Energinet der som udgangspunkt er slået til for en almindelig husstand.
+  // Poster fra Energinet en almindelig C-kunde betaler. Eksakte navne, ikke
+  // regexmatch: "transmission" rammer også 132/150 kV-tariffen og elafgiften
+  // på transmissionsnettet, og "systemtarif" rammer storforbrugersatsen.
+  // Alt andet kan slås til i hånden under Indstillinger.
+  var STANDARD_POSTER = [
+    "transmissions nettarif",
+    "systemtarif",
+    "elafgift",
+    "balancetarif for forbrug"
+  ];
   function defaultOn(note){
-    var n = (note||"").toLowerCase();
-    if (/produktion|indfødning|egenproducent/.test(n)) return false;
-    if (/reduceret/.test(n)) return false;                 // kun for elvarmekunder
-    if (/transmission/.test(n)) return true;
-    if (/^systemtarif/.test(n)) return true;
-    if (/^elafgift$/.test(n)) return true;
-    if (/balancetarif for forbrug/.test(n)) return true;
-    return false;
+    return STANDARD_POSTER.indexOf(String(note||"").trim().toLowerCase()) !== -1;
   }
 
   var state = {
@@ -296,88 +294,50 @@
   }
 
   /* ---------- hent ---------- */
-  function fetchSpot(from, to){
-    var q = {start: from, end: to, limit: 1000, filter: JSON.stringify({PriceArea:["DK1"]})};
-    return getJSON(url("DayAheadPrices", q)).then(function(js){
-      if ((js.records||[]).length) return js;
-      return getJSON(url("Elspotprices", q));   // fallback hvis datasættet skifter navn igen
-    }).catch(function(){
-      return getJSON(url("Elspotprices", q));
-    }).then(function(js){
-      var rows = js.records || [];
-      var buckets = {};
-      rows.forEach(function(r){
-        var t = r.TimeDK || r.HourDK;
-        if(!t) return;
-        var date = t.slice(0,10), h = parseInt(t.slice(11,13),10);
-        var p = r.DayAheadPriceDKK;
-        if (p === null || p === undefined) p = r.SpotPriceDKK;
-        if (p === null || p === undefined) return;
-        buckets[date] = buckets[date] || {};
-        (buckets[date][h] = buckets[date][h] || []).push(p/1000); // DKK/MWh -> DKK/kWh
-      });
-      var out = {};
-      Object.keys(buckets).forEach(function(d){
-        var arr = new Array(24).fill(null);
-        for (var h=0; h<24; h++){
-          var v = buckets[d][h];
-          if (v && v.length) arr[h] = v.reduce(function(a,b){return a+b;},0)/v.length;
-        }
-        out[d] = arr;
-      });
-      return out;
-    });
-  }
-
-  function fetchTariffs(date){
-    var to = nextDate(date);
-    var dso = getJSON(url("DatahubPricelist", {
-      start: date, end: to, limit: 50,
-      filter: JSON.stringify({GLN_Number:[GLN_DSO], Note:[DSO_NOTE]})
-    }));
-    var en = getJSON(url("DatahubPricelist", {
-      start: date, end: to, limit: 200,
-      filter: JSON.stringify({GLN_Number:[GLN_ENERGINET], ChargeType:["D03"]})
-    }));
-    return Promise.all([dso, en]).then(function(res){
-      var drec = (res[0].records || [])[0];
-      state.dso[date] = drec ? {note: drec.Note, code: drec.ChargeTypeCode, prices: priceArray(drec)} : null;
-
-      var seen = {}, list = [];
-      (res[1].records || []).forEach(function(r){
-        if (seen[r.Note]) return;
-        seen[r.Note] = 1;
-        list.push({note: r.Note, prices: priceArray(r)});
-        if (!(r.Note in state.enOn)) state.enOn[r.Note] = defaultOn(r.Note);
-      });
-      list.sort(function(a,b){ return a.note.localeCompare(b.note, "da"); });
-      state.energinet[date] = list;
-    });
-  }
-
+  // Data kommer fra data.json, som en GitHub Action opdaterer hver time.
+  // Siden kalder ikke Energi Data Service direkte: det tillader deres API ikke fra en browser.
   function loadAll(){
     document.getElementById("errbox").innerHTML = "";
-    document.getElementById("stamp").textContent = "Henter priser…";
+    document.getElementById("stamp").textContent = "Henter priser\u2026";
     state.dates = [dkDate(0), dkDate(1)];
-    var d0 = state.dates[0], d1 = state.dates[1];
-    return fetchSpot(d0, nextDate(d1)).then(function(spot){
-      state.spot = spot;
-      return Promise.all([fetchTariffs(d0), fetchTariffs(d1).catch(function(){})]);
-    }).then(function(){
-      var now = new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen", dateStyle:"short", timeStyle:"short"}).format(new Date());
-      document.getElementById("stamp").textContent = "Hentet " + now;
+
+    return fetch("data.json?t=" + Date.now(), {cache:"no-store"}).then(function(r){
+      if(!r.ok) throw new Error("HTTP " + r.status + " p\u00e5 data.json");
+      return r.json();
+    }).then(function(js){
+      var days = js.days || {};
+      state.spot = {}; state.dso = {}; state.energinet = {};
+      Object.keys(days).forEach(function(d){
+        var e = days[d] || {};
+        if (e.spot) state.spot[d] = e.spot;
+        state.dso[d] = e.dso || null;
+        state.energinet[d] = e.energinet || [];
+        (e.energinet || []).forEach(function(p){
+          if (!(p.note in state.enOn)) state.enOn[p.note] = defaultOn(p.note);
+        });
+      });
+
+      var stamp = document.getElementById("stamp");
+      if (js.generated){
+        var g = new Date(js.generated);
+        var txt = new Intl.DateTimeFormat("da-DK", {timeZone:"Europe/Copenhagen", dateStyle:"short", timeStyle:"short"}).format(g);
+        var age = (Date.now() - g.getTime())/3600000;
+        stamp.textContent = "Priser opdateret " + txt + (age > 6 ? " \u2014 mere end 6 timer gamle" : "");
+      } else {
+        stamp.textContent = "Priser indl\u00e6st";
+      }
+
       renderSettings();
       render();
-    }).catch(function(e){
-      showError(e);
-    });
+    }).catch(showError);
   }
 
   function showError(e){
     document.getElementById("stamp").textContent = "Kunne ikke hente data";
     document.getElementById("errbox").innerHTML =
       '<div class="err"><strong>Priserne kunne ikke hentes.</strong><br>' +
-      'Siden henter direkte fra Energi Data Service. Det kræver netadgang, og det virker kun når filen åbnes i en almindelig browser — ikke i en sandkasse der blokerer eksterne kald.<br><br>' +
+      'Siden l\u00e6ser <code>data.json</code>, som opdateres af workflowet <em>Opdater elpriser</em> i repoet. ' +
+      'Mangler filen, er workflowet ikke k\u00f8rt endnu \u2014 start det manuelt under fanen Actions.<br><br>' +
       '<code>' + String(e && e.message ? e.message : e) + '</code></div>';
   }
 
