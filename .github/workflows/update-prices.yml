@@ -29,6 +29,8 @@ jobs:
           const GLN_ENERGINET = "5790000432752";  // Energinet
           const DSO_NOTE = "Nettarif C time";
 
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
           const dkDate = (off) => {
             const d = new Date();
             d.setDate(d.getDate() + off);
@@ -41,23 +43,37 @@ jobs:
             return d.toISOString().slice(0, 10);
           };
 
-          async function get(dataset, params) {
+          // Energi Data Service har rate limits. Vent og prøv igen, hvis de svarer 429.
+          async function get(dataset, params, forsoeg = 0) {
             const url = API + dataset + "?" + new URLSearchParams(params);
             const r = await fetch(url, { headers: { Accept: "application/json" } });
+            if (r.status === 429 && forsoeg < 6) {
+              const body = await r.text();
+              const m = body.match(/(\d+)\s*second/);
+              const vent = (m ? Number(m[1]) : 10) + 3;
+              console.log("Rate limit paa " + dataset + " - venter " + vent + " sekunder");
+              await sleep(vent * 1000);
+              return get(dataset, params, forsoeg + 1);
+            }
             if (!r.ok) throw new Error(dataset + " svarede " + r.status + ": " + (await r.text()).slice(0, 300));
             return r.json();
           }
+
           const priceArray = (rec) =>
             Array.from({ length: 24 }, (_, i) => {
               const v = rec["Price" + (i + 1)];
               return typeof v === "number" ? v : 0;
             });
 
-          const d0 = dkDate(0), d1 = dkDate(1);
+          const gaelderPaa = (rec, date) =>
+            String(rec.ValidFrom).slice(0, 10) <= date &&
+            (!rec.ValidTo || String(rec.ValidTo).slice(0, 10) > date);
 
-          // Spotpriser. Markedet kører 15-minutters intervaller, så kvarterne lægges sammen til timegennemsnit.
+          const d0 = dkDate(0), d1 = dkDate(1), slut = nextDate(d1);
+
+          // 1) Spotpriser. Markedet koerer 15-minutters intervaller, saa kvarterne lægges sammen til timegennemsnit.
           const spotJs = await get("DayAheadPrices", {
-            start: d0, end: nextDate(d1), limit: "1000",
+            start: d0, end: slut, limit: "1000",
             filter: JSON.stringify({ PriceArea: [AREA] })
           });
           const buckets = {};
@@ -74,34 +90,38 @@ jobs:
           for (const date of [d0, d1]) {
             const b = buckets[date];
             if (!b) continue;
-            const spot = Array.from({ length: 24 }, (_, h) => {
-              const v = b[h];
-              return v && v.length ? v.reduce((x, y) => x + y, 0) / v.length : null;
-            });
-            days[date] = { spot };
+            days[date] = {
+              spot: Array.from({ length: 24 }, (_, h) => {
+                const v = b[h];
+                return v && v.length ? v.reduce((x, y) => x + y, 0) / v.length : null;
+              })
+            };
           }
           if (!days[d0]) throw new Error("Ingen spotpriser for " + d0 + " - skriver ikke data.json");
 
-          // Nettarif fra Elnet Midt og afgifter fra Energinet, pr. dag
-          for (const date of Object.keys(days)) {
-            const to = nextDate(date);
+          // 2) Nettarif fra Elnet Midt, hele perioden i eet kald
+          await sleep(4000);
+          const dsoJs = await get("DatahubPricelist", {
+            start: d0, end: slut, limit: "100",
+            filter: JSON.stringify({ GLN_Number: [GLN_DSO], Note: [DSO_NOTE] })
+          });
 
-            const dsoJs = await get("DatahubPricelist", {
-              start: date, end: to, limit: "50",
-              filter: JSON.stringify({ GLN_Number: [GLN_DSO], Note: [DSO_NOTE] })
-            });
-            const drec = (dsoJs.records ?? [])[0];
+          // 3) Afgifter fra Energinet, hele perioden i eet kald
+          await sleep(4000);
+          const enJs = await get("DatahubPricelist", {
+            start: d0, end: slut, limit: "500",
+            filter: JSON.stringify({ GLN_Number: [GLN_ENERGINET], ChargeType: ["D03"] })
+          });
+
+          for (const date of Object.keys(days)) {
+            const drec = (dsoJs.records ?? []).find((r) => gaelderPaa(r, date));
             days[date].dso = drec
               ? { note: drec.Note, code: drec.ChargeTypeCode, prices: priceArray(drec) }
               : null;
 
-            const enJs = await get("DatahubPricelist", {
-              start: date, end: to, limit: "200",
-              filter: JSON.stringify({ GLN_Number: [GLN_ENERGINET], ChargeType: ["D03"] })
-            });
             const seen = new Set(), list = [];
             for (const r of enJs.records ?? []) {
-              if (seen.has(r.Note)) continue;
+              if (!gaelderPaa(r, date) || seen.has(r.Note)) continue;
               seen.add(r.Note);
               list.push({ note: r.Note, prices: priceArray(r) });
             }
@@ -109,17 +129,17 @@ jobs:
             days[date].energinet = list;
           }
 
-          // Skriv kun hvis selve tallene har ændret sig, så der ikke laves en commit i timen
+          // Skriv kun hvis selve tallene har aendret sig, saa der ikke laves en commit i timen
           const fresh = { priceArea: AREA, days };
-          let unchanged = false;
+          let uaendret = false;
           try {
             const old = JSON.parse(await fs.readFile("data.json", "utf8"));
             delete old.generated;
-            unchanged = JSON.stringify(old) === JSON.stringify(fresh);
+            uaendret = JSON.stringify(old) === JSON.stringify(fresh);
           } catch {}
 
-          if (unchanged) {
-            console.log("Ingen ændringer.");
+          if (uaendret) {
+            console.log("Ingen aendringer.");
           } else {
             await fs.writeFile("data.json", JSON.stringify({ generated: new Date().toISOString(), ...fresh }));
             console.log("Skrev data.json for " + Object.keys(days).join(" og "));
