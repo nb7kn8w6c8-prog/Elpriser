@@ -99,6 +99,24 @@
   .detail .h{font-weight:600;font-size:1rem}
   .detail .tot{margin-left:auto;font-weight:700;font-size:1.05rem}
 
+  /* ---- rullende raekker ---- */
+  .rows{display:flex;flex-direction:column;gap:3px}
+  .rrow{display:grid;grid-template-columns:52px 1fr 62px;align-items:center;gap:9px;
+        background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+  .rrow:focus-visible{outline:2px solid var(--spot);outline-offset:2px}
+  .rrow .t{font-size:.76rem;color:var(--soft)}
+  .rrow.now .t{color:var(--now);font-weight:700}
+  .rrow .track{height:19px;background:var(--line);border-radius:3px;overflow:hidden;display:flex}
+  .rrow .track i{display:block;height:100%}
+  .rrow .track .bs{background:var(--spot)}
+  .rrow .track .bt{background:var(--tariff)}
+  .rrow .v{font-size:.8rem;text-align:right;font-weight:600}
+  .rrow.cheap .v{color:var(--ok)}
+  .rrow.sel .track{outline:2px solid var(--ink);outline-offset:-1px}
+  .daybreak{display:flex;align-items:center;gap:8px;margin:11px 0 6px;font-size:.72rem;
+            color:var(--soft);text-transform:uppercase;letter-spacing:.05em}
+  .daybreak::after{content:"";flex:1;height:1px;background:var(--line)}
+
   /* ---- extremes ---- */
   .facts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
   .fact{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
@@ -151,10 +169,7 @@
   <header>
     <h1>Elpris time for time</h1>
     <span class="place">Viborg · DK1 · Elnet Midt, kategori C</span>
-    <nav class="daynav" id="daynav">
-      <button type="button" data-day="0" aria-pressed="true">I dag</button>
-      <button type="button" data-day="1" aria-pressed="false">I morgen</button>
-    </nav>
+    <nav class="daynav" id="daynav"></nav>
   </header>
 
   <div class="status">
@@ -185,7 +200,7 @@
     <div class="fact"><div class="k">Dyreste time</div><div class="v" id="expV">–</div><div class="s" id="expS"></div></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="tblCard">
     <table id="tbl">
       <caption>Alle priser i kr. pr. kWh inkl. moms</caption>
       <thead><tr><th>Time</th><th>Strøm</th><th>Transport og afgifter</th><th>I alt</th></tr></thead>
@@ -243,7 +258,9 @@
   }
 
   var state = {
+    view: "roll",          // "roll" = fra nu og frem, "day" = et kalenderdoegn
     day: 0,
+    selRoll: null,
     dates: [],
     spot: {},        // dato -> [24 tal, kr/kWh ekskl. moms]
     dso: {},         // dato -> {note, prices:[24]}
@@ -299,13 +316,14 @@
   function loadAll(){
     document.getElementById("errbox").innerHTML = "";
     document.getElementById("stamp").textContent = "Henter priser\u2026";
-    state.dates = [dkDate(0), dkDate(1)];
 
     return fetch("data.json?t=" + Date.now(), {cache:"no-store"}).then(function(r){
       if(!r.ok) throw new Error("HTTP " + r.status + " p\u00e5 data.json");
       return r.json();
     }).then(function(js){
       var days = js.days || {};
+      state.dates = Object.keys(days).sort();
+      if (state.day >= state.dates.length) state.day = 0;
       state.spot = {}; state.dso = {}; state.energinet = {};
       Object.keys(days).forEach(function(d){
         var e = days[d] || {};
@@ -327,6 +345,7 @@
         stamp.textContent = "Priser indl\u00e6st";
       }
 
+      buildNav();
       renderSettings();
       render();
     }).catch(showError);
@@ -363,7 +382,128 @@
   }
 
   /* ---------- tegn ---------- */
+  function dayLabel(iso){
+    if (iso === dkDate(0)) return "I dag";
+    if (iso === dkDate(1)) return "I morgen";
+    var p = iso.split("-");
+    return new Intl.DateTimeFormat("da-DK", {weekday:"long", day:"numeric", month:"short"})
+      .format(new Date(Date.UTC(+p[0], +p[1]-1, +p[2])));
+  }
+
+  function buildNav(){
+    var nav = document.getElementById("daynav");
+    var html = '<button type="button" data-view="roll" aria-pressed="' +
+               (state.view === "roll") + '">Frem i tiden</button>';
+    state.dates.forEach(function(d, i){
+      html += '<button type="button" data-day="' + i + '" aria-pressed="' +
+              (state.view === "day" && state.day === i) + '">' + dayLabel(d) + '</button>';
+    });
+    nav.innerHTML = html;
+  }
+
+  // Alle timer fra den aktuelle time og saa langt datasaettet raekker.
+  function composeRoll(){
+    var out = [], nowH = dkHourNow(), today = dkDate(0);
+    state.dates.forEach(function(d){
+      var c = compose(d);
+      if (!c) return;
+      c.rows.forEach(function(r){
+        if (d === today && r.h < nowH) return;
+        out.push({date:d, h:r.h, spot:r.spot, tar:r.tar, net:r.net, tot:r.tot});
+      });
+    });
+    return out;
+  }
+
   function render(){
+    document.getElementById("tblCard").hidden = (state.view === "roll");
+    if (state.view === "roll") renderRoll(); else renderDay();
+  }
+
+  function setFacts(cheap, exp, withDay){
+    var lbl = function(r){
+      return "kl. " + pad(r.h) + "\u2013" + pad((r.h+1)%24) +
+             (withDay && r.date !== dkDate(0) ? " " + dayLabel(r.date).toLowerCase() : "");
+    };
+    document.getElementById("cheapV").textContent = kr(cheap.tot) + " kr.";
+    document.getElementById("cheapS").textContent = lbl(cheap);
+    document.getElementById("expV").textContent = kr(exp.tot) + " kr.";
+    document.getElementById("expS").textContent = lbl(exp) + " \u00b7 " +
+      kr(exp.tot - cheap.tot) + " kr. dyrere";
+  }
+
+  function clearFacts(){
+    document.getElementById("cheapV").textContent = "\u2013";
+    document.getElementById("expV").textContent = "\u2013";
+    document.getElementById("cheapS").textContent = "";
+    document.getElementById("expS").textContent = "";
+  }
+
+  function renderRoll(){
+    var host = document.getElementById("chartHost");
+    var rows = composeRoll();
+
+    if (!rows.length){
+      host.innerHTML = '<div class="skeleton">Ingen priser frem i tiden.</div>';
+      setHero(null); clearFacts();
+      return;
+    }
+
+    var maxTot = rows.reduce(function(a,r){ return Math.max(a, r.tot); }, 0) || 1;
+    var cheap = rows.reduce(function(a,r){ return r.tot < a.tot ? r : a; });
+    var exp   = rows.reduce(function(a,r){ return r.tot > a.tot ? r : a; });
+    var today = dkDate(0), nowH = dkHourNow();
+
+    var html = '<div class="rows">', last = null;
+    rows.forEach(function(r, i){
+      if (r.date !== last){
+        if (i > 0) html += '</div><div class="daybreak">' + dayLabel(r.date) + '</div><div class="rows">';
+        last = r.date;
+      }
+      var key = r.date + "|" + r.h;
+      var wS = Math.max(r.spot, 0)/maxTot*100;
+      var wT = Math.max(r.tar, 0)/maxTot*100;
+      var cls = (r === cheap ? " cheap" : "") +
+                (r.date === today && r.h === nowH ? " now" : "") +
+                (state.selRoll === key ? " sel" : "");
+      html += '<button class="rrow' + cls + '" type="button" data-k="' + key + '" ' +
+              'aria-label="Kl. ' + pad(r.h) + ', ' + kr(r.tot) + ' kroner per kilowatttime">' +
+                '<span class="t">' + pad(r.h) + "\u2013" + pad((r.h+1)%24) + '</span>' +
+                '<span class="track">' +
+                  '<i class="bs" style="width:' + wS.toFixed(2) + '%"></i>' +
+                  '<i class="bt" style="width:' + wT.toFixed(2) + '%"></i>' +
+                '</span>' +
+                '<span class="v">' + kr(r.tot) + '</span>' +
+              '</button>';
+    });
+    html += '</div>';
+    host.innerHTML = html;
+
+    host.querySelectorAll(".rrow").forEach(function(el){
+      el.addEventListener("click", function(){
+        state.selRoll = (state.selRoll === el.dataset.k) ? null : el.dataset.k;
+        renderRoll();
+      });
+    });
+
+    setFacts(cheap, exp, true);
+
+    var show = null;
+    if (state.selRoll){
+      show = rows.filter(function(r){ return r.date + "|" + r.h === state.selRoll; })[0];
+    }
+    var isNow = false;
+    if (!show){ show = rows[0]; isNow = (show.date === today && show.h === nowH); }
+    setHero(show, isNow, show.date);
+
+    if (state.dso[rows[0].date] === null){
+      document.getElementById("errbox").innerHTML =
+        '<div class="err">Elnet Midts nettarif mangler for ' + rows[0].date +
+        '. Totalen er derfor for lav. Tjek posten under Indstillinger.</div>';
+    }
+  }
+
+  function renderDay(){
     var date = state.dates[state.day];
     var data = compose(date);
     var host = document.getElementById("chartHost");
@@ -371,7 +511,7 @@
 
     if (!data || !data.rows.length){
       host.innerHTML = '<div class="skeleton">' +
-        (state.day === 1 ? "Morgendagens priser offentliggøres omkring kl. 13." : "Ingen priser for dagen.") +
+        (date === dkDate(1) ? "Morgendagens priser offentliggøres omkring kl. 13." : "Ingen priser for dagen.") +
         '</div>';
       tbody.innerHTML = "";
       setHero(null);
@@ -506,7 +646,7 @@
     }
   }
 
-  function setHero(r, isNow){
+  function setHero(r, isNow, date){
     var lbl = document.getElementById("heroLbl");
     if (!r){
       lbl.textContent = "Prisen";
@@ -515,8 +655,9 @@
       document.getElementById("heroTar").textContent = "–";
       return;
     }
+    var d = date || state.dates[state.day];
     lbl.textContent = isNow ? "Prisen lige nu" : "Kl. " + pad(r.h) + "–" + pad((r.h+1)%24) +
-      (state.day === 1 ? " i morgen" : "");
+      (d && d !== dkDate(0) ? " " + dayLabel(d).toLowerCase() : "");
     document.getElementById("heroPrice").innerHTML = kr(r.tot) + '<span> kr./kWh' + (state.vat ? "" : " ekskl. moms") + '</span>';
     document.getElementById("heroSpot").textContent = ore(r.spot) + " øre";
     document.getElementById("heroTar").textContent = ore(r.tar) + " øre";
@@ -529,7 +670,8 @@
 
   /* ---------- indstillinger ---------- */
   function renderSettings(){
-    var date = state.dates[state.day] in state.dso ? state.dates[state.day] : state.dates[0];
+    var date = state.view === "roll" ? state.dates[0] : state.dates[state.day];
+    if (!(date in state.dso)) date = state.dates[0];
     var d = state.dso[date];
     var dsoBox = document.getElementById("dsoBox");
     if (d){
@@ -562,8 +704,14 @@
   /* ---------- events ---------- */
   document.getElementById("daynav").addEventListener("click", function(e){
     var b = e.target.closest("button"); if(!b) return;
-    state.day = +b.dataset.day;
-    state.sel = null;
+    if (b.dataset.view === "roll"){
+      state.view = "roll";
+    } else {
+      state.view = "day";
+      state.day = +b.dataset.day;
+    }
+    state.sel = null; state.selRoll = null;
+    document.getElementById("errbox").innerHTML = "";
     [].forEach.call(this.querySelectorAll("button"), function(x){
       x.setAttribute("aria-pressed", x === b ? "true" : "false");
     });
